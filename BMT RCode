@@ -1,0 +1,181 @@
+#BMT LOSS R code 
+# At a minial you need to pull Student Entry Fiscal Year, Measure, Student SSN ,
+#           Accesion Flight Number, TRQI, Shipping AFSC And Student Status date
+#if the column names have been changed, you will need to change the names in the code 
+library(tidyverse)
+library (data.table)
+library (lubridate)
+library (Stringr)
+
+currentdate <- Sys.Date()
+'%notin%'   <- Negate(`%in%`)
+
+  # The setwd is the place wher the documents import form and export to- 
+      # for you code you need to change this 
+setwd("C:/Users/1114453915C/Documents/Projects/SWOV_deepdive")
+BMT_Data_Set <- read_csv("BMT_Master_Data_File.csv") 
+# if you forgot to change the date format in ADSS this code ill take care of it
+BMT_Data_Set$Event_Date  <- as.Date(ifelse(substr(BMT_Data_Set$Event_Date, 1, 1) %in% c("0":"9"), as.Date(BMT_Data_Set$Event_Date, format = "%m/%d/%Y"), 
+                                           as.Date(BMT_Data_Set$Event_Date, format = "%B %d, %Y")), origin = "1970-01-01")
+
+#--------------Part 1: Set Up the Data -----
+
+#BMT_Data_Set %>% 
+  #filter(`Student Entry Fiscal Year`== 2021) #Years need
+
+# We need to split the data in two data sets: Entries and Termination(Grads or Eliminations)
+# we will them rejoin them. Also Change the name in the begining alloww to work with the data better. 
+str(BMT_Data_Set)
+
+BMT_Entries<- BMT_Data_Set %>%
+  filter( Measure == "Entry") %>% 
+  select(EAD_FY,SSN,TRQI,AFN,AFSC,Event_Date)
+  #select(`Student Orginal Entry Fy`,`Student SSN`,TRQI,`Accession Flight Number`,AFSC,`Student Status Date`)
+
+names(BMT_Entries) [c(2,5,6)] <- c("SSN","RAFSC","EAD.Date")
+
+BMT_Term<- BMT_Data_Set %>%
+  filter( Measure == "Graduation" |Measure== "Elimination" ) %>% 
+  select(SSN,TRQI,Ship_AFSC,Measure,Event_Date)
+  #select(`Student SSN`,TRQI,`Shipping AFSC`,Measure,`Student Status Date`)
+names(BMT_Term) [c(1,3,5)] <- c("SSN","SAFSC","Term.Date")
+
+BMT_Student_Flow  <- left_join (BMT_Entries, BMT_Term, by= c("SSN", "TRQI"))
+BMT_Student_Flow %>% filter(TRQI=="AJ20")
+
+#For the SW AFSC
+BMT_Student_Flow$RAFSC  <- ifelse(BMT_Student_Flow$RAFSC == "1T231", "1Z131", BMT_Student_Flow$RAFSC)
+BMT_Student_Flow$RAFSC  <- ifelse(BMT_Student_Flow$RAFSC == "1C231", "1Z231", BMT_Student_Flow$RAFSC)
+BMT_Student_Flow$RAFSC  <- ifelse(BMT_Student_Flow$RAFSC == "1C431", "1Z331", BMT_Student_Flow$RAFSC)
+BMT_Student_Flow$RAFSC  <- ifelse(BMT_Student_Flow$RAFSC == "1W032", "1Z431", BMT_Student_Flow$RAFSC)
+BMT_Student_Flow$SAFSC  <- ifelse(BMT_Student_Flow$SAFSC == "1T231", "1Z131", BMT_Student_Flow$SAFSC)
+BMT_Student_Flow$SAFSC  <- ifelse(BMT_Student_Flow$SAFSC == "1C231", "1Z231", BMT_Student_Flow$SAFSC)
+BMT_Student_Flow$SAFSC  <- ifelse(BMT_Student_Flow$SAFSC == "1C431", "1Z331", BMT_Student_Flow$SAFSC)
+BMT_Student_Flow$SAFSC  <- ifelse(BMT_Student_Flow$SAFSC == "1W032", "1Z431", BMT_Student_Flow$SAFSC)
+
+BMT_Student_Flow$SAFSC  <- ifelse(substr(BMT_Student_Flow$SAFSC, 4, 4) == "1", 
+                                  trimws(paste(substr(BMT_Student_Flow$SAFSC, 1, 3), "3", 
+                            substr(BMT_Student_Flow$SAFSC, 5, 6), sep="")), BMT_Student_Flow$SAFSC)
+
+
+BMT_Student_Flow$Elim  <- ifelse(BMT_Student_Flow$Measure == "Elimination", 1, 0)
+BMT_Student_Flow$Grad  <- ifelse(BMT_Student_Flow$Measure == "Graduation", 1, 0)
+BMT_Student_Flow$SIC   <- ifelse(is.na(BMT_Student_Flow$Measure), 1, 0)
+                        
+BMT_Student_Flow$DQ    <- ifelse(BMT_Student_Flow$RAFSC != substr(BMT_Student_Flow$SAFSC, 1, 5) & 
+                           (substr(BMT_Student_Flow$RAFSC, 3, 3) %notin% 
+                         c("A", "E", "G", "M")) & BMT_Student_Flow$Measure != "Elimination",  1, 0)
+#------------------Part Two: Introducing TT data -----------------------
+#We need to compare BMT with TT data to clear up the unknown SAFSc and to ensure if trainees SAFCS change
+# between TT and BMT
+
+#setwd("C:/Users/1114453915C/Documents/Projects/BMT loss")
+#TT_Data_Set  <- read_csv("ADSL_Data2.csv")
+setwd("C:/Users/1114453915C/Documents/Projects/SWOV_deepdive")
+TT_Data_Set <- read_csv("NPS_ADSL_FY10YTD.csv")
+TT_Data_Set$Status_Date  <-  as.Date(ifelse(substr(TT_Data_Set$Status_Date, 1, 1) %in% c("0":"9"),
+                                            as.Date(TT_Data_Set$Status_Date, format = "%m/%d/%Y"), 
+                                            as.Date(TT_Data_Set$Status_Date, format = "%B %d, %Y")),
+                                     origin = "1970-01-01")
+
+TT_Data_Set$TT_AFSC  <- trimws(substr(TT_Data_Set$`Course ID`, 6, 11))
+TT_Data_Set$TT_AFSC  <- ifelse(TT_Data_Set$TT_AFSC == "1T231", "1Z131", TT_Data_Set$TT_AFSC)
+TT_Data_Set$TT_AFSC  <- ifelse(TT_Data_Set$TT_AFSC == "1C231", "1Z231", TT_Data_Set$TT_AFSC)
+TT_Data_Set$TT_AFSC  <- ifelse(TT_Data_Set$TT_AFSC == "1C431", "1Z331", TT_Data_Set$TT_AFSC)
+TT_Data_Set$TT_AFSC  <- ifelse(TT_Data_Set$TT_AFSC == "1W032", "1Z431", TT_Data_Set$TT_AFSC)
+
+#TT_Data_Set$Status_Date  <- as.Date(TT_Data_Set$Status_Date, format = "%m/%d/%Y")
+
+TT_Data_Set<-TT_Data_Set %>%
+  filter( Measure =="Original Entry")%>% 
+  select(`Student SSN`,`Course ID`,`AFSC Shred`,Measure,Status_Date,`Status Code`)
+names(TT_Data_Set) [c(1,2,5)] <- c("SSN","Course_ID","Date")
+
+TT_Data_Set  <- unique(TT_Data_Set)
+
+
+TT_Min_Set  <- setDT (TT_Data_Set)[, .(Date = min(Date)), by = list(SSN)]
+TT_Min_Set  <- left_join (TT_Min_Set, TT_Data_Set, by= c("SSN","Date"))
+TT_Min_Set  <- TT_Min_Set %>% select ( SSN,Date,`AFSC Shred`, Course_ID)
+names(TT_Min_Set)  <- c("SSN", "TT.Date", "TTAFSC", "Course_ID")
+
+BMT_Student_Flow  <- left_join(BMT_Student_Flow, TT_Min_Set, by="SSN")
+
+#Selecting 
+BMT_Student_Flow  <- BMT_Student_Flow[, c(1,2,3, 5:9, 14:16, 10:13)]
+BMT_Student_Flow$TTAFSC  <- trimws(substr(BMT_Student_Flow$Course_ID, 6, 11))
+BMT_Student_Flow$TTAFSC  <- ifelse(substr(BMT_Student_Flow$TTAFSC, 4, 4) == "1", 
+                                   trimws(paste(substr(BMT_Student_Flow$TTAFSC, 1, 3), "3", 
+                                substr(BMT_Student_Flow$TTAFSC, 5, 6), sep="")), BMT_Student_Flow$TTAFSC)
+                                                                                             
+BMT_Student_Flow$TTAFSC  <- ifelse(BMT_Student_Flow$RAFSC == "1T231" & BMT_Student_Flow$SAFSC == "1T231", "1T131", BMT_Student_Flow$TTAFSC)
+BMT_Student_Flow$TTAFSC  <- ifelse(BMT_Student_Flow$RAFSC == "1C231" & BMT_Student_Flow$SAFSC == "1C231", "1C231", BMT_Student_Flow$TTAFSC)
+BMT_Student_Flow$TTAFSC  <- ifelse(BMT_Student_Flow$RAFSC == "1C431" & BMT_Student_Flow$SAFSC == "1C431", "1C431", BMT_Student_Flow$TTAFSC)
+
+#---------Part 3: TT DQ caculation--------
+#There are 3 thing we need to do here: 1 clear up the unknown shipping AFSC, 2 compare our already 
+  #determined DQ to see if the TT data disagrees. and 3 All SW trainee are call 9T500 in BMt and split 
+  #off into there SW AFSc once they hace been vector. the last code need to insure that 9T500 don't 
+  # count as being reclass when they are vectored 
+
+BMT_Student_Flow$TDQ  <- ifelse(BMT_Student_Flow$RAFSC != substr(BMT_Student_Flow$TTAFSC, 1, 5) & 
+                         substr(BMT_Student_Flow$RAFSC, 3, 3) %notin% c("A", "E", "G", "M"),  1, 0)
+BMT_Student_Flow$TDQ  <- ifelse(BMT_Student_Flow$SAFSC == BMT_Student_Flow$TTAFSC 
+                                & BMT_Student_Flow$RAFSC == "UNKNOWN", 0, BMT_Student_Flow$TDQ)
+BMT_Student_Flow$TDQ  <- ifelse(BMT_Student_Flow$RAFSC %in% c("1Z131", "1Z231", "1Z331", "1Z431") & 
+                         (BMT_Student_Flow$SAFSC == "9T500" | BMT_Student_Flow$TTAFSC == "9T500")
+                                , 0, BMT_Student_Flow$TDQ)
+BMT_Student_Flow$TDQ  <- ifelse((BMT_Student_Flow$SAFSC %in% c("1Z131", "1Z231", "1Z331", "1Z431")| 
+                           BMT_Student_Flow$TTAFSC %in% c("1Z131", "1Z231", "1Z331", "1Z431" )) & 
+                            (BMT_Student_Flow$RAFSC == "9T500"), 0, BMT_Student_Flow$TDQ)
+BMT_Student_Flow$TDQ  <- ifelse(BMT_Student_Flow$RAFSC == substr(BMT_Student_Flow$TTAFSC, 1, 5) | 
+                                BMT_Student_Flow$RAFSC == BMT_Student_Flow$SAFSC | 
+                                  BMT_Student_Flow$TTAFSC == "9T500", 0, 1) 
+
+BMT_Student_Flow$TDQ  <- ifelse(BMT_Student_Flow$SIC == 1, 0,BMT_Student_Flow$TDQ) 
+
+BMT_Student_Flow$Entries  <- 1
+
+#----------Final part: SUM------------ 
+
+#Similar to BMT_Analysis_Set  <-subset(BMT_Student_Flow, select= c("Student.SSN", "Date", "AFSC.Shred", "Course.ID"))
+BMT_Analysis_Set  <- BMT_Student_Flow[, c(1,4, 12:17)]
+BMT_Analysis_Set[is.na(BMT_Analysis_Set)]  <- 0
+BMT_Analysis_SetA  <- aggregate(.~EAD_FY +RAFSC, data=BMT_Analysis_Set, FUN=sum, na.rm = TRUE)
+# Calculate the where they reclass too
+BMT_Analysis_SetB  <- BMT_Student_Flow[, c(1,6, 16)]
+BMT_Analysis_SetB  <- aggregate(.~EAD_FY+ SAFSC, data=BMT_Analysis_SetB, FUN=sum, na.rm = TRUE)
+names(BMT_Analysis_SetB) [3] <- "Reclass_In"
+
+BMT_Analysis_SetA <- left_join(BMT_Analysis_SetA, BMT_Analysis_SetB, by= c("EAD.FY","RAFSC"="SAFSC"))
+
+BMT_Analysis_SetA  <- BMT_Analysis_SetA[, c(1,2, 8, 3:7)]
+BMT_Analysis_SetA$BMT.Loss  <- (BMT_Analysis_SetA$Elim + BMT_Analysis_SetA$TDQ)
+BMT_Analysis_SetA$BMT.Loss.Rate  <- (BMT_Analysis_SetA$BMT.Loss / (BMT_Analysis_SetA$Entries - BMT_Analysis_SetA$SIC))
+
+BMT_Student_Flow  <-  BMT_Student_Flow[, c(1:10, 16, 11:15)]
+BMT_Student_Flow$Elim[is.na(BMT_Student_Flow$Elim)]  <- 0
+BMT_Student_Flow$Grad[is.na(BMT_Student_Flow$Grad)]  <- 0
+BMT_Student_Flow$DQ[is.na(BMT_Student_Flow$DQ)]  <- 0
+BMT_Student_Flow$TDQ[is.na(BMT_Student_Flow$TDQ)]  <- 0
+
+
+csvFileName <- paste("FY20_21_BMT_Losses_", currentdate,".csv")
+write.csv(BMT_Analysis_SetA, file=csvFileName, row.names =  FALSE, na = "")
+
+csvFileName <- paste("BMT_Student_Loss_Analysis_", currentdate,".csv")
+write.csv(BMT_Student_Flow, file=csvFileName, row.names =  FALSE, na = "")          
+
+#----------------------Data Visialization------------
+#Now the we some of the data for the initail report, we want to take some time and complete so true analyst
+#However 140 data point is too big graph and is is useful insights. However since AFSC belong in bigger 
+# groups we can group the data into more managable categories 
+setwd("C:/Users/1114453915C/Documents/Projects/BMT loss")
+BMT_Cat <- read_csv("Categories_fix.csv") 
+BMT_Cat_Data <- left_join(BMT_Analysis_SetA, BMT_Cat, by= c("RAFSC"="AFSC"))
+BMT_Cat_Data <-BMT_Cat_Data%>% filter(AFSC_Fam != "NA")
+ggplot(data= BMT_Cat_Data, aes(x= AFSC_Fam, y= TDQ/Entries, color = EAD_FY)) +
+  geom_col() +facet_grid(EAD_FY~., scales = "free")
+BMT_Cat_Data2<-BMT_Cat_Data%>%filter(AFSC_Fam== "Operations")
+ggplot(data= BMT_Cat_Data2, aes(x= Career_Grp, y= TDQ/Entries)) +
+  geom_col(fill="red", color="black")+facet_grid(EAD_FY~., scales = "free")
